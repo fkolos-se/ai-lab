@@ -56,8 +56,6 @@ ${project_root}/
 
 Use `files/` for artifacts belonging to the issue: user-requested reports, generated output, downloaded or extracted research material when appropriate, and planning inputs that should persist. Do not put ordinary production-code changes there.
 
-Use the lowercase names as the canonical replacements for legacy stage files: `ISSUE.md` → `problem.md`, `SOLUTION.md` → `design.md`, and `PLAN.md` or `TASKS.md` → `tasks.md`. When an existing issue contains only a legacy file, preserve its content while moving the workflow to the canonical name before editing that stage. Never overwrite a canonical file; if both names exist, compare them and ask before consolidating or removing either one. Add a missing blank `input.md` and `files/` directory when bringing a legacy issue into the new workflow.
-
 ## Stages
 
 ### 1. Initialization
