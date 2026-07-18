@@ -1,101 +1,131 @@
 ---
 name: kproject
-description: "Guide for working with kproject, a local, file-based issue workflow that lives inside a software project's own repo under a .kproject/ directory. Trigger this skill immediately whenever a message starts with 'kproject' followed by a path (e.g. 'kproject /path/to/project/root') — that establishes the active project root for the rest of the thread. Also use it for any follow-up request in an already-active kproject thread, such as creating a new issue, researching or planning an issue (drafting ISSUE.md, SOLUTION.md, or PLAN.md), being asked to work on 'the issue file', 'the solution file', or 'the plan', being asked to perform, implement, or execute the plan, or being asked to do specific numbered plan items. Always prefer this skill over ad-hoc file editing whenever files under .kproject/issues/ (per issue) are involved."
-compatibility: "Requires an agent with read/write access to the project's local filesystem (e.g. Claude Code, a Filesystem MCP connector, or a container filesystem tool)."
+description: "Guide for kproject, a local, file-based issue workflow under a software project's .kproject/ directory. Trigger immediately when a message starts with `kproject`, optionally followed by an issue name and/or `-p PATH`; this selects (and, if needed, initializes) the active issue. Also use it for every follow-up request in an active kproject thread, including research, design, task planning, question resolution, or implementation. Always prefer this skill over ad-hoc editing for files under .kproject/issues/."
 ---
 
 # kproject
 
-kproject is a lightweight, file-based issue workflow that lives inside a software project's own repository, under `.kproject/`. Each issue moves through three phases — initializing, researching/planning, and implementing — and every phase's output is a plain Markdown file that a human and an agent can both pick up later. This skill defines how to operate that workflow: which files to create, in what order, and how to route the user's natural-language requests to the right action.
+kproject is a lightweight, file-based issue workflow inside a project's `.kproject/` directory. An issue progresses through initialization, research/design/task planning, and implementation. Its durable records are plain Markdown files so a person or a future agent can resume the work with its context intact.
 
-This skill assumes some other tool already gives you read/write access to the project's files (a filesystem connector, Claude Code, a bash shell, etc.) — kproject itself is just the convention for *what* to read and write and *when*.
+## Calling command and active context
 
-## Activating a project
+Invoke the skill with:
 
-The skill is invoked explicitly, with a message like:
-
-> kproject /path/to/project/root
-
-Treat the given path as the **active project root** for the rest of the thread. If the user later sends another `kproject <path>` with a different path, switch the active root to that new one. If a later request is ambiguous about which project it applies to (more than one root mentioned, unclear which is current), ask — don't guess at a filesystem path.
-
-As soon as a project is activated:
-
-1. Confirm the path exists and is a directory.
-2. Look for `${project_root}/.kproject/AGENTS.md`. It's optional — if it's missing, move on. If it exists, read it and treat it exactly like a project-level `AGENTS.md`: it carries the project's own conventions, constraints, and instructions, and applies for the rest of the thread alongside this skill, not instead of it.
-3. Look for `${project_root}/.kproject/issues/`. If it exists, list what's there so you have situational awareness — which issues exist, which of ISSUE.md / SOLUTION.md / PLAN.md each one has, and roughly how far each PLAN.md has progressed. If `.kproject/` or `.kproject/issues/` don't exist yet, that's fine — this project simply hasn't used kproject before, and both get created the first time an issue is initialized.
-
-Give the user a brief orientation after activation (which project, what issues already exist, whether an AGENTS.md was found) rather than silently proceeding — but keep it short, this isn't a report.
-
-## Project layout
-
+```text
+kproject [<issue_name>] [-p <project_path>]
 ```
+
+`<issue_name>` is optional and selects the active issue. `-p <project_path>` is optional and selects the project root. Accept `-p` before or after the issue name. Treat the value following `-p` as the path and the remaining positional value as the issue name; never interpret a positional value as a project path. Treat stage selectors such as `--design` as actions, not issue names. Ask a focused question if `-p` has no value or multiple positional values make the issue name ambiguous.
+
+Parse the command before taking action:
+
+- `kproject add-animation -p /work/my-app` activates issue `add-animation` in `/work/my-app`.
+- `kproject add-animation` activates that issue in the agent's project root.
+- `kproject -p /work/my-app` selects a project but no issue.
+- `kproject` uses the agent's project root but no issue.
+
+Resolve the project root in this order: the explicit `-p` value, the agent's current project root (normally the current Git root), then the current working directory when outside Git. Validate that it exists and is a directory. If no root can be determined, ask for `-p`.
+
+Accept an issue name as a slug or a quoted phrase with spaces. Reject raw names equal to `.` or `..` or containing a path separator. Normalize other names to a safe lowercase kebab-case slug by transliterating or dropping unsupported characters and collapsing separators. For example, convert `Add Animation to the Button` to `add-animation-to-the-button`. Tell the user whenever normalization changes the name, and ask for another name if normalization produces an empty slug.
+
+On every invocation:
+
+1. Resolve and validate the selected project root.
+2. Read `${project_root}/.kproject/AGENTS.md` if present. It is optional, but its instructions apply for the rest of the thread alongside this skill.
+3. Inspect `${project_root}/.kproject/issues/` if present. Determine each issue's recency from the latest modification of a file inside its folder, and inspect its stage files and task status. Do not create `.kproject/` merely to inspect it.
+4. If an issue was named, make it the active issue. If its folder is absent, initialize it immediately (see below). If it exists, briefly orient the user to its available records and current task status.
+5. If no issue was named and issues exist, ask the user with an interactive selector when available. Show up to five of the most recently updated issues and include `Create a new issue`; use the same choices in a compact numbered list when no selector UI is available. Do not choose an issue on the user's behalf. If no issues exist, ask for a new issue name directly.
+6. If the same message also contains substantive context or a stage action, first establish the issue, record the input, and then perform the requested stage. Do not stop after initialization unless selection/initialization was the only requested action.
+
+Keep the selected project root and active issue for follow-up messages in the thread. A later main `kproject` invocation establishes a fresh selection using the resolution rules above.
+
+## Issue layout
+
+```text
 ${project_root}/
 └── .kproject/
-    ├── AGENTS.md                 # optional, project-level instructions for the agent
+    ├── AGENTS.md                         # optional, project-level instructions
     └── issues/
         └── ${issue_name}/
-            ├── ISSUE.md           # the problem, written during research
-            ├── SOLUTION.md        # the concept + specs, written during research
-            ├── PLAN.md            # the implementation plan, written during planning
-            └── ...                # anything else the agent or user adds along the way
+            ├── input.md                  # original user prompt, context, goals
+            ├── problem.md                # researched problem and open questions
+            ├── design.md                 # proposed solution and design questions
+            ├── tasks.md                  # ordered implementation tasks and status
+            └── files/                    # task-specific generated or source files
 ```
 
-`${issue_name}` is a kebab-case slug (lowercase, hyphen-separated). If the user gives a name that isn't already a clean slug ("Add Animation to the Button"), convert it (`add-animation-to-the-button`) and mention the slug you used so they can correct it if they'd rather have something else.
+Use `files/` for artifacts belonging to the issue: user-requested reports, generated output, downloaded or extracted research material when appropriate, and planning inputs that should persist. Do not put ordinary production-code changes there.
 
-## The three phases
+Use the lowercase names as the canonical replacements for legacy stage files: `ISSUE.md` → `problem.md`, `SOLUTION.md` → `design.md`, and `PLAN.md` or `TASKS.md` → `tasks.md`. When an existing issue contains only a legacy file, preserve its content while moving the workflow to the canonical name before editing that stage. Never overwrite a canonical file; if both names exist, compare them and ask before consolidating or removing either one. Add a missing blank `input.md` and `files/` directory when bringing a legacy issue into the new workflow.
 
-### 1. Initialization — creating the issue
+## Stages
 
-Triggered by requests like "create a new issue called `add-animation`" or "start a new issue for X."
+### 1. Initialization
 
-This phase only creates the empty issue directory: `.kproject/issues/${issue_name}/`. Create `.kproject/` and `.kproject/issues/` too if this is the project's first issue. Don't create ISSUE.md, SOLUTION.md, or PLAN.md here — those belong to research, even if the user hands you a one-line description along with the name. Hold onto anything they told you at this point; it's the seed for ISSUE.md once research starts.
+Initialization is triggered by the main `kproject [<issue_name>] [-p <project_path>]` command when the named issue folder is missing.
 
-Confirm the issue was created, and either move into research if that's clearly what they want next, or ask.
+Create `.kproject/`, `.kproject/issues/`, `.kproject/issues/${issue_name}/`, and its `files/` directory as necessary. Create a blank `input.md` in the issue folder. Do not create `problem.md`, `design.md`, or `tasks.md` during initialization. Confirm the initialized issue and selected project concisely.
 
-### 2. Research (aka Plan) — ISSUE.md → SOLUTION.md → PLAN.md
+`input.md` is the durable record of the user's prompt, including context, explanations, goals, constraints, supplied links, and requested deliverables. Keep it blank only when the selecting command contains no substantive issue input. If the initialization message includes context or a stage action, create the blank file first, then populate it before doing that work. Preserve the original request; append later clarifications as clearly dated or labeled additions rather than replacing it.
 
-Triggered by requests like "research and plan the issue," "let's work on the issue file," "draft the solution," or similar. This phase produces the three research files, in order, but it's a genuinely iterative process, not a template-filling exercise:
+`input.md` starts blank by design. When it is first populated, read `assets/input.template.md` and use it as an adaptable structure.
 
-1. **ISSUE.md** — Understand and describe the problem. Read the relevant parts of the codebase first (don't ask the user things you can find out yourself), then interview them for the parts that aren't in the code: intent, constraints, priorities, what "done" looks like. Write the problem description and Acceptance Criteria once there's enough to make them concrete and testable — vague acceptance criteria make the later plan hard to scope.
-2. **SOLUTION.md** — Once the problem is settled, work out how to solve it: the approach, the technical design, and enough specification (interfaces, data shapes, files touched, key decisions) that another engineer could pick it up without asking you anything. Interview the user again where there are real design decisions to make (trade-offs, library choices, scope calls) — don't silently decide things that materially change the shape of the solution.
-3. **PLAN.md** — Break the solution into an ordered, numbered list of tasks. Each task should be small and self-contained enough that a junior engineer could pick up any single one and implement it without re-deriving context from the rest of the plan.
+### 2. Research, design, and tasks
 
-Treat "in this order" as the default path, not a one-way gate. If, while writing SOLUTION.md, you or the user realize ISSUE.md was incomplete or wrong, go back and fix it before continuing — the same goes for PLAN.md surfacing a gap in SOLUTION.md. The user may also explicitly ask to revisit an earlier file ("let's revise the issue file after all"); handle that the same way — update it, then check whether anything downstream needs to change as a result.
+Work with `problem.md`, `design.md`, and `tasks.md`. Use problem → design → tasks as the normal full-research sequence, but iterate: correct upstream records when new information changes them, then update affected downstream records.
 
-A request that names one file specifically — "the issue file," "the solution," "the plan" — means work on that file alone, not the full sequence:
+Always process every data source the user supplies or references, including Jira tickets, GitHub repositories or issues, linked documents, APIs, logs, screenshots, and files. Record each source in `input.md`, inspect it before drawing conclusions or asking questions it can answer, and cite or identify it alongside relevant findings in the stage records. Also inspect relevant local code. If a source is inaccessible, keep its reference, record the access constraint, and ask only for the access or information genuinely needed. Never silently omit a source or claim to have inspected one that was unavailable.
 
-- "issue" / "issue file" → `ISSUE.md`
-- "solution" / "solution file" / "concept" → `SOLUTION.md`
-- "plan" / "plan file" → `PLAN.md`
+#### `problem.md`
 
-Read `assets/ISSUE.template.md`, `assets/SOLUTION.template.md`, or `assets/PLAN.template.md` before writing the corresponding file for the first time, and use it as a starting structure. It's a scaffold, not a form: drop sections that don't apply to a given issue and add sections a particular problem genuinely needs.
+Research and describe the current situation, desired outcome, evidence, scope, acceptance criteria, and constraints. `Open Questions` is a first-class section: keep material unknowns explicit, actionable, and current. Do not bury uncertainty in prose or delete questions merely because planning continues.
 
-### 3. Implementation (aka Develop) — working the plan
+Read `assets/problem.template.md` before first creating this file and adapt it to the issue rather than mechanically retaining irrelevant headings.
 
-Triggered by requests like "perform the plan," "implement the plan," or "do plan items 1, 2, 3."
+#### `design.md`
 
-- **"Perform/implement the plan"** (no items named): start from the first item that isn't `Done` and work forward to the end of the list, implementing each one and updating its status as you finish it. If you hit a blocker on an item, mark it accordingly (see conventions below) rather than silently skipping it, and tell the user before moving on.
-- **Specific items named** ("do items 1, 2, 3"): implement exactly those, regardless of the status of items in between. Update the status of each one you touch.
+Develop the solution approach, technical design, specifications, alternatives, risks, dependencies, and decisions required for implementation. Keep a prominent `Open Questions` section for unresolved design decisions; it must explain what decision is needed, why it matters, and any known options or evidence.
 
-Update PLAN.md as you finish each item, not just at the end — status should always reflect the true current state, since it's what tells you (or a future thread) where "the first undone item" actually is. If the project has tests or its AGENTS.md specifies a verification step, run it as part of finishing each item.
+Read `assets/design.template.md` before first creating this file and adapt it as needed.
 
-## Plan item and status conventions
+#### `tasks.md`
 
-Each item in PLAN.md keeps a stable number for the life of the issue — that's how the user refers back to it ("do items 1, 2, 3"). If new tasks come up mid-implementation, append them with new numbers at the end rather than renumbering the list, even if they'd logically slot in earlier.
+Turn the settled design into ordered, stable-numbered implementation tasks. Each task must be self-contained enough that an engineer can implement it without re-deriving essential context. Include affected files and verification where known.
 
-Default statuses: `To Do` and `Done`. Use situation-specific ones when they're actually informative — `In Progress`, `Blocked`, `Skipped` — rather than forcing everything into the two defaults. Whatever status you use, keep it unambiguous about whether the item counts as finished, since "first undone item" and "perform the plan" depend on that.
+Read `assets/tasks.template.md` before first creating this file and adapt it as needed.
 
-## Quick reference: request → action
+### 3. Implementation
+
+Implement tasks from `tasks.md`. Update each task's status as it is completed, not only at the end. Run relevant tests and project-required verification for each finished task.
+
+If new work is discovered, append a newly numbered task; never renumber existing tasks. If blocked, use an informative status such as `Blocked`, explain the blocker in the task, and tell the user before proceeding. Update `problem.md` or `design.md` when implementation exposes an incorrect assumption or a newly material decision.
+
+## Stage selectors in a user prompt
+
+Treat these selectors as the user asking to perform work in the corresponding stage. They may appear alongside an ordinary natural-language request.
+
+| Selector | Requested work |
+|---|---|
+| `--problem` | Work on `problem.md` only. Research the issue and its supplied sources, then update the problem statement, acceptance criteria, and open questions without automatically producing a design. |
+| `--design` | Work on `design.md` only. Research as needed, but do not automatically create or update tasks. |
+| `--questions` | Process open questions, especially `design.md` → `Open Questions`. Research answerable questions first; ask the user only for material decisions evidence cannot settle. Record resolutions and update their downstream implications while retaining or clearly marking unresolved questions. |
+| `--tasks` | Work on `tasks.md`. Derive or revise tasks from the available design; surface missing design information rather than inventing material decisions. Do not implement the tasks. |
+| `--dev` | Implement from `tasks.md`: all unfinished tasks unless the user names specific task numbers. Require `tasks.md`; do not silently create a plan when it is absent. |
+
+Without a selector, route clear natural-language requests as follows:
 
 | User says something like... | Action |
 |---|---|
-| `kproject /path/to/project` | Activate that project root — see Activating a project |
-| "Create a new issue called `X`" | Initialization: create `.kproject/issues/x/` |
-| "Research and plan the issue" | Research phase, full sequence: ISSUE.md → SOLUTION.md → PLAN.md |
-| "Let's work on the issue file" | Research phase, ISSUE.md only |
-| "Draft/revise the solution" | Research phase, SOLUTION.md only |
-| "Let's do the plan" (before one exists) | Research phase, PLAN.md only |
-| "Perform the plan" / "implement the plan" | Implementation, from first undone item to the end |
-| "Do plan items 1, 2, 3" | Implementation, exactly those items |
+| "research and plan this issue" | Full research sequence: `problem.md` → `design.md` → `tasks.md` |
+| "work on the problem" / "define the issue" | `problem.md` only |
+| "draft/revise the design" / "solution" | `design.md` only |
+| "make the tasks" / "plan the work" | `tasks.md` only |
+| "answer the open questions" | Open-question processing, prioritizing `design.md` |
+| "perform the plan" / "implement the plan" | `--dev`: first unfinished task through the end |
+| "do tasks 1, 2, 3" | `--dev`: exactly those task numbers |
 
-If a request doesn't cleanly match one of these and it's not obvious from context which issue or phase it refers to, ask — don't guess at which files to touch.
+If the requested action is unclear, or a material product/design decision cannot be discovered from code or provided sources, ask a focused question. Otherwise proceed using the active issue.
+
+## Task status conventions
+
+Each task in `tasks.md` retains its number for the issue's lifetime. Default statuses are `To Do` and `Done`; use `In Progress`, `Blocked`, or `Skipped` when those communicate real state better. A task's status must make it unambiguous whether it counts as finished, because "implement the plan" begins at the first unfinished task.
