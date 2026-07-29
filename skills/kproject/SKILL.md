@@ -1,6 +1,6 @@
 ---
 name: kproject
-description: "Guide for kproject, a local, file-based issue workflow under a software project's .kproject/ directory. Trigger immediately when a message starts with `kproject`, optionally followed by an issue name and/or `-p PATH`; this selects (and, if needed, initializes) the active issue. Also use it for every follow-up request in an active kproject thread, including research, design, task planning, question resolution, or implementation. Always prefer this skill over ad-hoc editing for files under .kproject/issues/."
+description: "Guide for kproject, a local, file-based issue workflow under a software project's .kproject/ directory. Trigger immediately when a message starts with `kproject`, optionally followed by an issue name and/or `-p PATH`; this selects (and, if needed, initializes) the active issue. Also use it for every follow-up request in an active kproject thread, including research, design, task planning, question resolution, or implementation. Always prefer this skill over ad-hoc editing for files under .kproject/issues/. Don't load in reaction of only kproject root mention, search through parent dirs for the first with .kproject subdir and consider it root instead."
 ---
 
 # kproject
